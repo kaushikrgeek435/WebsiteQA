@@ -257,6 +257,139 @@ def describe_element(item):
     )
 
 
+# Rule book checks (QA_RULE_BOOK.md): RESP-01 slider arrows centered, RESP-02 button
+# text on one line, RESP-03 text not under a button, RESP-04 desktop menu on one row.
+ARROW_CENTER_TOLERANCE_PX = 6
+DESKTOP_MENU_RULE_MIN_WIDTH = 1024
+
+RULE_BOOK_SCRIPT = r"""
+([arrowTolerance, desktopMinWidth]) => {
+    const vw = document.documentElement.clientWidth;
+    const issues = [];
+    const textOf = el => (el.innerText || el.value || el.getAttribute('aria-label') || '')
+        .replace(/\s+/g, ' ').trim().slice(0, 50);
+    const visible = el => {
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2 || r.right <= 0 || r.left >= vw) return false;
+        for (let n = el; n && n !== document.body; n = n.parentElement) {
+            const s = getComputedStyle(n);
+            if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+        }
+        return true;
+    };
+    const flag = (rule, el, message) => {
+        el.setAttribute('data-qa-rule-issue', String(issues.length));
+        issues.push({ rule, message, text: textOf(el) });
+    };
+    // Groups rects into rows by their vertical center.
+    const countRows = rects => {
+        const rows = [];
+        for (const r of rects) {
+            const c = r.top + r.height / 2;
+            if (!rows.some(x => Math.abs(x - c) < Math.max(4, r.height / 2))) rows.push(c);
+        }
+        return rows.length;
+    };
+    const overlap = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2
+        && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2;
+
+    // RESP-02 / RESP-03: buttons.
+    const buttons = [...document.querySelectorAll(
+        'button, input[type=submit], input[type=button], .button, .btn, [role=button], ' +
+        '.wc-forward, .elementor-button, .wp-block-button__link'
+    )].filter(b => visible(b) && !b.closest('nav, .swiper, .slick-slider, .splide, .owl-carousel')
+        && !(b.parentElement && b.parentElement.closest('.button, .btn, button, .elementor-button')));
+    for (const b of buttons) {
+        const label = textOf(b);
+        if (!label || label.length > 40 || /\n/.test(b.innerText || '')) continue;
+        if (b.tagName !== 'INPUT') {
+            const range = document.createRange();
+            range.selectNodeContents(b);
+            const lines = [...range.getClientRects()].filter(r => r.width > 1 && r.height > 4);
+            if (lines.length > 1 && countRows(lines) > 1) {
+                flag('RESP-02', b, `button text wraps to ${countRows(lines)} lines`);
+                continue;
+            }
+        }
+        const br = b.getBoundingClientRect();
+        const box = b.parentElement && b.parentElement.parentElement;
+        if (!box) continue;
+        const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!node.textContent.trim() || b.contains(node) || !visible(node.parentElement)) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            if ([...range.getClientRects()].some(r => overlap(r, br))) {
+                flag('RESP-03', b, `text "${node.textContent.trim().slice(0, 30)}" runs under the button`);
+                break;
+            }
+        }
+    }
+
+    // RESP-01: slider arrows centered on their track.
+    const tracks = '.swiper-wrapper, .slick-list, .splide__track, .owl-stage-outer, .flickity-viewport';
+    const arrows = [...document.querySelectorAll(
+        '.swiper-button-prev, .swiper-button-next, .swiper-nav-btn, .slick-prev, .slick-next, ' +
+        '.owl-prev, .owl-next, .splide__arrow, .flickity-prev-next-button, .elementor-swiper-button'
+    )].filter(visible);
+    for (const a of arrows) {
+        let track = null;
+        for (let p = a.parentElement, i = 0; p && i < 5 && !track; p = p.parentElement, i++) {
+            track = [...p.querySelectorAll(tracks)].find(t => visible(t) && !t.contains(a));
+        }
+        if (!track) continue;
+        const ar = a.getBoundingClientRect(), tr = track.getBoundingClientRect();
+        const arrowCenter = ar.top + ar.height / 2, trackCenter = tr.top + tr.height / 2;
+        // Arrows placed above/below the track by design are not judged.
+        if (arrowCenter < tr.top || arrowCenter > tr.bottom) continue;
+        const offset = Math.round(arrowCenter - trackCenter);
+        if (Math.abs(offset) > Math.max(arrowTolerance, tr.height * 0.1)) {
+            flag('RESP-01', a, `slider arrow ${offset > 0 ? offset + 'px below' : -offset + 'px above'} the track center`);
+            continue;
+        }
+        const slides = [...track.querySelectorAll(':scope > * > *, :scope > *')]
+            .filter(s => visible(s) && s.getBoundingClientRect().width < tr.width * 0.6);
+        // Only the part of a slide inside the track's visible window counts.
+        const shown = s => {
+            const r = s.getBoundingClientRect();
+            return { left: Math.max(r.left, tr.left), right: Math.min(r.right, tr.right),
+                     top: Math.max(r.top, tr.top), bottom: Math.min(r.bottom, tr.bottom) };
+        };
+        if (slides.length >= 2 && slides.some(s => overlap(shown(s), ar))) {
+            flag('RESP-01', a, 'slider arrow overlaps a visible slide');
+        }
+    }
+
+    // RESP-04: desktop header/footer menu on one row.
+    if (vw >= desktopMinWidth) {
+        const menus = [...document.querySelectorAll(
+            'nav ul, header ul[class*=menu], footer ul[class*=menu], header ul[class*=nav], footer ul[class*=nav]'
+        )].filter(ul => !ul.parentElement.closest('ul') && visible(ul));
+        for (const ul of menus) {
+            const items = [...ul.children].filter(li => li.tagName === 'LI' && visible(li)
+                && li.querySelector(':scope > a'));
+            if (items.length < 3) continue;
+            const rects = items.map(li => li.getBoundingClientRect());
+            const lefts = new Set(rects.map(r => Math.round(r.left)));
+            if (lefts.size < 2) continue;  // vertical list, not a horizontal menu
+            const rows = countRows(rects);
+            if (rows > 1 && rows < items.length) {
+                const where = ul.closest('footer') ? 'footer' : 'header';
+                flag('RESP-04', ul, `${where} menu wraps to ${rows} rows (${items.length} items)`);
+            }
+        }
+    }
+    return issues;
+}
+"""
+
+
+def detect_rule_book_issues(page):
+    return page.evaluate(
+        RULE_BOOK_SCRIPT, [ARROW_CENTER_TOLERANCE_PX, DESKTOP_MENU_RULE_MIN_WIDTH]
+    )
+
+
 MENU_STATE_SCRIPT = r"""
 () => {
     const viewportWidth = document.documentElement.clientWidth;
@@ -460,7 +593,8 @@ def worse_status(current, new):
     return new if order.get(new, 0) > order.get(current, 0) else current
 
 
-def take_screenshot(page, url, width, height, suffix="", highlight=True):
+def take_screenshot(page, url, width, height, suffix="", highlight=True,
+                    marker="data-qa-responsive-issue"):
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
     file_name = f"{safe_filename(url)}_{width}x{height}{suffix}.png"
     path = os.path.join(SCREENSHOT_DIR, file_name)
@@ -469,14 +603,15 @@ def take_screenshot(page, url, width, height, suffix="", highlight=True):
         if highlight:
             page.evaluate(
                 """
-                () => {
-                    const el = document.querySelector('[data-qa-responsive-issue="0"]');
+                (marker) => {
+                    const el = document.querySelector(`[${marker}="0"]`);
                     if (!el) return;
                     el.scrollIntoView({ block: 'center', inline: 'nearest' });
                     el.style.outline = '3px solid red';
                     el.style.outlineOffset = '-3px';
                 }
-                """
+                """,
+                marker,
             )
         page.screenshot(path=path, full_page=False)
         return path
@@ -579,6 +714,21 @@ def check_viewport(page, url, viewport, full_screenshots=False):
         status = "WARNING" if status == "PASS" else status
         issues.append("No H1 detected at this viewport.")
 
+    layout_status = status
+    try:
+        rule_issues = detect_rule_book_issues(page)
+    except Exception as exc:
+        rule_issues = []
+        issues.append(f"Rule book check failed (automation problem): {exc}")
+    if rule_issues:
+        status = worse_status(status, "WARNING")
+        issues.append(
+            "RULE BOOK: " + " ; ".join(
+                f"{item['rule']} {item['message']}" + (f" \"{item['text']}\"" if item["text"] else "")
+                for item in rule_issues[:5]
+            )
+        )
+
     if issues:
         details = " | ".join(issues)
     else:
@@ -592,8 +742,12 @@ def check_viewport(page, url, viewport, full_screenshots=False):
             )
 
     screenshots = []
-    if status != "PASS":
+    if layout_status != "PASS":
         screenshots.append(take_screenshot(page, url, width, height))
+    if rule_issues:
+        screenshots.append(take_screenshot(
+            page, url, width, height, suffix="_rules", marker="data-qa-rule-issue"
+        ))
 
     # Navigation check runs last because it may click the menu button.
     menu_status, menu_note, menu_fields = evaluate_menu(page, width)
@@ -611,6 +765,7 @@ def check_viewport(page, url, viewport, full_screenshots=False):
         "viewport_width": viewport_width,
         "document_width": document_width,
         "cut_off_elements": layout["cutOffCount"],
+        "rule_issues": " ; ".join(sorted({item["rule"] for item in rule_issues})),
         **menu_fields,
         "status": status,
         "result": status,
@@ -657,7 +812,7 @@ def save_report(results):
             file,
             fieldnames=[
                 "page", "viewport", "viewport_width", "document_width",
-                "cut_off_elements", "menu_mode", "expected_menu",
+                "cut_off_elements", "rule_issues", "menu_mode", "expected_menu",
                 "menu_button_visible", "nav_links_visible", "mobile_menu_opens",
                 "status", "result", "details", "screenshot", "full_page_screenshot",
             ],

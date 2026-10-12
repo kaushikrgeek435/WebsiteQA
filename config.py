@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 #
 # ============================================================
 
-SITE_URL = "https://dev.dotcomdesign.com/eclipse-roofing/"
+SITE_URL = "https://rootandremedy-wellness.com/"
 
 # Staging hosts serve several sites under one domain, so the first path
 # segment names the site there (dev.dotcomdesign.com/eclipse-roofing).
