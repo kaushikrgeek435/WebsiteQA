@@ -1,0 +1,22 @@
+{
+  "default_project": "alliance",
+  "projects": {
+    "alliance": {
+      "figma_file_url": "https://www.figma.com/design/uiq2WiIDnWQLFOPJG7K4ql/Alliance-Senior-Home--Copy-",
+      "staging_base_url": "https://www.allianceseniorhome.com",
+      "pages": [
+        {"name": "Home", "node": "10005-1068", "path": "/"},
+        {"name": "Contact Us", "node": "10006-16196", "path": "/contact"},
+        {"name": "Assisted Living", "node": "10042-4287", "path": "/assisted-living"},
+        {"name": "Senior Care Program", "node": "10042-4995", "path": "/senior-care-program"}
+      ]
+    },
+    "sonrise": {
+      "figma_file_url": "https://www.figma.com/design/SPNDDkjuc79qeBc9PrYBI3/SonRise-Coffee--Priyanshi-",
+      "staging_base_url": "https://devgws.com/geek-designer/sonrise-coffee-priyanshi",
+      "pages": [
+        {"name": "Home", "path": "/", "frames": {"desktop": "503-1039", "mobile": "547-1322"}}
+      ]
+    }
+  }
+}
