@@ -294,6 +294,8 @@ RULE_BOOK_SCRIPT = r"""
         && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2;
 
     // RESP-02 / RESP-03: buttons.
+    // Expand-pattern labels: these buttons intentionally reveal hidden content below them.
+    const expandLabels = /^(read more|show more|see more|load more|expand|view more|more details?|learn more)$/i;
     const buttons = [...document.querySelectorAll(
         'button, input[type=submit], input[type=button], .button, .btn, [role=button], ' +
         '.wc-forward, .elementor-button, .wp-block-button__link'
@@ -302,6 +304,8 @@ RULE_BOOK_SCRIPT = r"""
     for (const b of buttons) {
         const label = textOf(b);
         if (!label || label.length > 40 || /\n/.test(b.innerText || '')) continue;
+        // Skip accordion/expand buttons — text below them is intentionally hidden content.
+        if (expandLabels.test(label)) continue;
         if (b.tagName !== 'INPUT') {
             const range = document.createRange();
             range.selectNodeContents(b);
@@ -317,6 +321,14 @@ RULE_BOOK_SCRIPT = r"""
         const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
             if (!node.textContent.trim() || b.contains(node) || !visible(node.parentElement)) continue;
+            // Skip text that is visually clipped (CSS truncation / overflow:hidden accordion).
+            const pe = node.parentElement;
+            const ps = getComputedStyle(pe);
+            const peRect = pe.getBoundingClientRect();
+            if (ps.overflow === 'hidden' || ps.overflowY === 'hidden') continue;
+            if (ps.display === '-webkit-box' || ps['-webkit-line-clamp']) continue;
+            // Skip text node whose parent has near-zero visible height (collapsed accordion).
+            if (peRect.height < 4) continue;
             const range = document.createRange();
             range.selectNodeContents(node);
             if ([...range.getClientRects()].some(r => overlap(r, br))) {
@@ -328,11 +340,21 @@ RULE_BOOK_SCRIPT = r"""
 
     // RESP-01: slider arrows centered on their track.
     const tracks = '.swiper-wrapper, .slick-list, .splide__track, .owl-stage-outer, .flickity-viewport';
+    // Pagination dot selectors — if an arrow shares a container with dots it's a bottom-aligned design.
+    const dotSels = '.swiper-pagination, .slick-dots, .splide__pagination, .owl-dots, .flickity-page-dots';
     const arrows = [...document.querySelectorAll(
         '.swiper-button-prev, .swiper-button-next, .swiper-nav-btn, .slick-prev, .slick-next, ' +
         '.owl-prev, .owl-next, .splide__arrow, .flickity-prev-next-button, .elementor-swiper-button'
     )].filter(visible);
     for (const a of arrows) {
+        // Skip if the arrow shares a container (up to 4 levels) with pagination dots —
+        // that indicates a bottom-aligned design where arrows + dots sit together below the slides.
+        let sharedWithDots = false;
+        for (let p = a.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
+            if ([...p.querySelectorAll(dotSels)].some(d => visible(d))) { sharedWithDots = true; break; }
+        }
+        if (sharedWithDots) continue;
+
         let track = null;
         for (let p = a.parentElement, i = 0; p && i < 5 && !track; p = p.parentElement, i++) {
             track = [...p.querySelectorAll(tracks)].find(t => visible(t) && !t.contains(a));
